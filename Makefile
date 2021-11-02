@@ -1,2 +1,2 @@
-pths: pathfinder_standalone.c
-	gcc -o pths pathfinder_standalone.c -lm
+sha: sha256.c
+	gcc -O3 -w -o sha sha256.c
