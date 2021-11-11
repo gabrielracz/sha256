@@ -1,7 +1,7 @@
 /*
 ======================================================================
 Author:		Gabriel Racz
-Version: 	1.0
+Version: 	1.1
 Date:		June 03 2021
 
 Features:	-Hash an input of 54 characters or less (single 512 bit block)
@@ -11,7 +11,9 @@ Features:	-Hash an input of 54 characters or less (single 512 bit block)
 To do:		-Add ability to hash arbitrarily long inputs (block schedule)
 			-Read from file and hash contents
 			-Fix input buffer bullshittery in menus
+			-Add 32-bit support
 =====================================================================
+WARNING: Only produces correct results on 64-bit machines
 */
 
 #include<stdio.h>
@@ -66,6 +68,8 @@ int bigsig1(int x){
 int choice(uint32_t x, uint32_t y, uint32_t z){
 	return (x & y) ^ ((~x) & z);
 	
+	
+	//The worst choice implementation possible
 	/*
 	char bits = 32;
 	short bit;
@@ -88,7 +92,6 @@ int choice(uint32_t x, uint32_t y, uint32_t z){
 
 	return result;
 	*/
-	//return result;
 }
 
 int majority(uint32_t x, uint32_t y, uint32_t z){
@@ -126,7 +129,7 @@ void printCharBinary(unsigned char num){
 	int bits = sizeof(num) * 8;
 	short bit;
 	for(int i = 0; i < bits; i++){
-		bit = (num & (1 << bits-i-1)) >> bits-i-1;
+		bit = (num & (1 << (bits-i-1))) >> (bits-i-1);
 		printf("%d", bit);
 	}	
 	printf("\n");
@@ -292,7 +295,7 @@ void clearKeyboardBuffer(void){
 	while(ch = getchar() != '\n'&& ch != EOF);
 }
 
-int speedTest(uint32_t max){
+int speedTest(uint32_t max, int show_output){
 	time_t t;
 	srand((unsigned) time(&t));
 	clock_t begin_time = clock();
@@ -300,7 +303,10 @@ int speedTest(uint32_t max){
 	char message[56];
 
 	long count = 0;
-	uint32_t max_hash = max - 1;	
+	uint32_t max_hash = max - 1;
+	if(!show_output){
+		printf("\nRunning speed test...\n");
+	}
 	while(count < max_hash){
 		count++;
 		sprintf(message, "%08x%08x%08x%08x", rand(), rand(), rand(), rand());
@@ -308,22 +314,21 @@ int speedTest(uint32_t max){
 		unsigned char output[64];
 		sha256(message, len, output);
 
-		printf("[%ld] %32s       ", count,  message);
-				
-		for(int i =0; i < 32; i++){
-			printf("%02x", output[i]);
+		if(show_output){
+			printf("[%ld] %32s       ", count,  message);
+			for(int i =0; i < 32; i++){
+				printf("%02x", output[i]);
+			}
+			printf("\n");
 		}
-		printf("\n");
-
 	}
 	
 	float delta = (float)(clock() - begin_time)/CLOCKS_PER_SEC;
 	float hashes_per_second = (max_hash + 1)/delta;
-	double seconds_per_hash = delta/(max_hash + 1);
 	printf("\n");
-	printf("                                 Delta          %lf\n", delta);
-	printf("                                 Hash/Sec       %d\n", (int)floor(hashes_per_second));
-	printf("                                 Sec/Hash       %lf\n", seconds_per_hash);
+	printf("Hashes         %ld\n", max);
+	printf("Delta          %lfs\n", delta);
+	printf("Hash/Sec       %d\n", (int)floor(hashes_per_second));
 
 	return 0;
 }
@@ -430,27 +435,36 @@ int main(void){
 				break;
 			case 2:
 				printf("\nduration(1-4): \n");
-				
 				printf("$");
 				int cho_2;
 				scanf("%d", &cho_2);
-				getchar();
+				clearKeyboardBuffer();
+				
+				printf("\nshow output? (y/n):\n");
+				printf("$");
+				int show = 1;
+				char ch;
+				ch = getchar();
+				if(ch == 'n' || ch == 'N'){
+					show = 0;
+				}
+	
 				switch(cho_2){
 					case 1:
-						exitSpeed = speedTest(100000);
+						exitSpeed = speedTest(100000, show);
 						break;
 					case 2:
-						exitSpeed = speedTest(300000);
+						exitSpeed = speedTest(300000, show);
 							break;
 					case 3:
-						exitSpeed = speedTest(1000000);
+						exitSpeed = speedTest(1000000, show);
 						break;
 					case 4:
-						exitSpeed = speedTest(MAX_INT);
+						exitSpeed = speedTest(10000000, show);
 					default:
 						exitSpeed = 1;
 						break;
-					}
+				}
 				clearKeyboardBuffer();
 				cho = 0;
 				cho_2 = 0;
