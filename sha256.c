@@ -1,17 +1,27 @@
 /*
 ======================================================================
 Author:		Gabriel Racz
-Version: 	1.1
-Date:		June 03 2021
+Version: 	1.2.1
+Start Date:	June 03 2021
 
+Changes:
+[1.1]
 Features:	-Hash an input of 54 characters or less (single 512 bit block)
 			-Hashing speed test
-			-Getting menu inputs from user
+			-Finding hash with specified number of leading zeroes
+			-200,000 hashrate
+[1.2]
+			-Option to turn off output, leads to much higher performance
+			 especially on Windows where syscalls to printf are painful
+			-Multi-processing implemented. Can now run multi-core benchmarks.
+				~Best performance using all cores and threads available as
+				 processes count
+				~(Need to test fork() on Windows).
+			-15,000,000 hashrate on 8 core Ryzen 7 turbo enabled.
 
-To do:		-Add ability to hash arbitrarily long inputs (block schedule)
-			-Read from file and hash contents
-			-Fix input buffer bullshittery in menus
-			-Add 32-bit support
+[1.2.1]
+			-xorshift128 to generate random characters instead of sprintf() and rand()
+			-23,000,000 hashrate
 =====================================================================
 WARNING: Only produces correct results on 64-bit machines
 */
@@ -21,6 +31,7 @@ WARNING: Only produces correct results on 64-bit machines
 #include<math.h>
 #include<stdint.h>
 #include<stdlib.h>
+#include<pthread.h>
 #include<time.h>
 #define MAX_INT 4294967295
 
@@ -39,6 +50,8 @@ static const uint32_t ha[] = {
 	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 
 	0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
 };
+
+unsigned char g_show_output = 0;
 
 //-------------------Compound Functions-------------------
 int SHR(uint32_t num, int shift){
@@ -185,7 +198,6 @@ void processInput(uint32_t* dest, char* input, int len){
 	//Add length to last two int blocks
 	//Limit of 32 bit int is 2^32 or 4294967296
 	dest[15] = len*8;
-
 }
 
 
@@ -232,7 +244,7 @@ void compression(int* sched, char* output){
 	c += ha[2];
 	d += ha[3];
 	e += ha[4];
-	f += ha[5];
+	f += ha[5]; 
 	g += ha[6];
 	h += ha[7];
 	
@@ -290,68 +302,123 @@ void sha256(char* message, long len, char* output){
 
 //---------------------Use cases----------------------------------------
 
+//https://riptutorial.com/c/example/25123/xorshift-generation
+uint32_t w, x, y, z;
+uint32_t xorshift128(void) 
+{
+    uint32_t t = x;
+    t ^= t << 11U;
+    t ^= t >> 8U;
+    x = y; y = z; z = w;
+    w ^= w >> 19U;
+    w ^= t;
+    return w;
+}
+
 void clearKeyboardBuffer(void){
 	char ch;
 	while(ch = getchar() != '\n'&& ch != EOF);
 }
 
-int speedTest(uint32_t max, int show_output){
+int speedTest(int max){
 	time_t t;
 	srand((unsigned) time(&t));
-	clock_t begin_time = clock();
 
-	char message[56];
+	char message[56] = {'\0'};
+	
+	//Set the xorshift registers	
+	w = rand();
+	x = rand();
+	y = rand();
+	z = rand();
 
 	long count = 0;
-	uint32_t max_hash = max - 1;
-	if(!show_output){
-		printf("\nRunning speed test...\n");
-	}
+	uint32_t max_hash = max  - 1;
+	int len = 30;
+	unsigned char output[64];
 	while(count < max_hash){
 		count++;
-		sprintf(message, "%08x%08x%08x%08x", rand(), rand(), rand(), rand());
-		int len = strlen(message);
-		unsigned char output[64];
-		sha256(message, len, output);
+		//Randomize the string
+		for(int i = 0; i < len; i++){
+			message[i] = (xorshift128() % 74) + 48;
+		}
 
-		if(show_output){
-			printf("[%ld] %32s       ", count,  message);
+		sha256(message, len, output);
+		
+		if(g_show_output){
+			printf("[%ld] ", count);
+			printf("%s   ", message);
 			for(int i =0; i < 32; i++){
 				printf("%02x", output[i]);
 			}
 			printf("\n");
 		}
 	}
+	return 0;
+}
+
+void takeSpeed(uint32_t total_max, char num_threads){
+	int worker_max = total_max / num_threads;
+
+	if(!g_show_output){
+		printf("\nRunning speed test on %d core(s)...\n", num_threads);
+	}
 	
-	float delta = (float)(clock() - begin_time)/CLOCKS_PER_SEC;
-	float hashes_per_second = (max_hash + 1)/delta;
+	//Init timers
+	struct timespec start, finish;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+
+	//Spawn worker processes
+	pid_t* pids = malloc(sizeof(pid_t) * num_threads);
+	pid_t child_pid;
+	int* status;
+	for(int i = 0; i < num_threads; i++){
+		child_pid = fork();
+		if(child_pid == 0){
+			break;
+		}else{
+			pids[i] = child_pid;
+		}	
+	}
+	if(child_pid != 0){
+		for(int i = 0; i < num_threads; i++){
+			waitpid(pids[i], status, NULL);
+		}
+	}else{
+		speedTest(worker_max);
+		exit(0);
+	}
+
+	free(pids);
+	
+	//Timing and output
+	clock_gettime(CLOCK_MONOTONIC, &finish);
+	double delta;
+	delta = (finish.tv_sec - start.tv_sec);
+	delta += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
+	double hashes_per_second = (total_max + 1)/delta;
+	
 	printf("\n");
-	printf("Hashes         %ld\n", max);
+	printf("Hashes         %ld\n", total_max);
 	printf("Delta          %lfs\n", delta);
 	printf("Hash/Sec       %d\n", (int)floor(hashes_per_second));
-
-	return 0;
 }
 
 int hashInput(void){
 	char message[56];	
 	unsigned char output[64];
-	
 	fgets(message, 56, stdin);
-
-	if(message[strlen(message)-1] != '\n')
+	long len = strlen(message);
+	if(message[len-1] != '\n')
 		clearKeyboardBuffer();
-
-	message[strlen(message)-1] = '\0';
-
-	//message[strlen(message) - 1] = '\0';
+	message[len-1] = '\0';
+	
+	//Exit case
 	if(message[0] == '!' && message[1] == '!')
 		return 1;
 
-	long len = strlen(message);
 	sha256(message, len, output);
    
-
     printf("   ");
 	for(int i =0; i < 32; i++){
 		printf("%02x", output[i]);
@@ -372,13 +439,15 @@ void findHash(int zeroes){
 		sprintf(message, "%08x%08x%08x%08x", rand(), rand(), rand(), rand());
 		int len = strlen(message);
 		sha256(message, len, output);
-		
-		printf("[%ld] %32s       ", count,  message);
-				
-		for(int i =0; i < 32; i++){
+
+	
+		if(g_show_output){
+			printf("[%ld] %32s       ", count,  message);
+			for(int i =0; i < 32; i++){
 			printf("%02x", output[i]);
+			}
+			printf("\n");
 		}
-		printf("\n");
 		
 		for(int i = 0; i < zeroes; i++){
 			if(output[i] == 0){
@@ -413,24 +482,24 @@ void findHash(int zeroes){
 
 //-----------------------User Input---------------------------------
 
-int main(void){
+int main(int argc, char* argv[]){
 	int exit = 0;
 	while(exit != 1){
 		printf("\n   sha256\n");
 		printf("1. hash\n");
-		printf("2. speed test\n");
-		printf("3. find hash\n");
+		printf("2. single-core benchmark\n");
+		printf("3. multi-core benchmark\n");
+		printf("4. mine\n");
 		printf("\n$");
 		int cho = 0;
-		int exitHash = 0;
-		int exitSpeed = 0;
+		int exit_hash = 0;
 		scanf("%d", &cho);
 		getchar();
 		switch(cho){
 			case 1:
-				while(exitHash != 1){
+				while(exit_hash != 1){
 					printf("\n$");
-					exitHash = hashInput();
+					exit_hash = hashInput();
 				}
 				break;
 			case 2:
@@ -442,39 +511,86 @@ int main(void){
 				
 				printf("\nshow output? (y/n):\n");
 				printf("$");
-				int show = 1;
 				char ch;
 				ch = getchar();
-				if(ch == 'n' || ch == 'N'){
-					show = 0;
+				if(ch == 'y' || ch == 'Y'){
+					g_show_output = 1;
+				}else {
+					g_show_output = 0;
 				}
 	
 				switch(cho_2){
 					case 1:
-						exitSpeed = speedTest(100000, show);
+						takeSpeed(100000, 1);
 						break;
 					case 2:
-						exitSpeed = speedTest(300000, show);
-							break;
+						takeSpeed(300000, 1);
+						break;
 					case 3:
-						exitSpeed = speedTest(1000000, show);
+						takeSpeed(1000000, 1);
 						break;
 					case 4:
-						exitSpeed = speedTest(10000000, show);
+						takeSpeed(10000000, 1);
+						break;
+					case 5:
+						takeSpeed(MAX_INT, 1);
+						break;
 					default:
-						exitSpeed = 1;
 						break;
 				}
-				clearKeyboardBuffer();
 				cho = 0;
 				cho_2 = 0;
 				break;
 			case 3:
+				printf("\nprocesses:\n");
+				printf("$");
+				int procs;
+				scanf("%d", &procs);
+				clearKeyboardBuffer();
+		
+				printf("\nduration(1-4): \n");
+				printf("$");
+				scanf("%d", &cho_2);
+				clearKeyboardBuffer();
+				g_show_output = 0;	
+				switch(cho_2){
+					case 1:
+						takeSpeed(5000000, procs);
+						break;
+					case 2:
+						takeSpeed(50000000, procs);
+						break;
+					case 3:
+						takeSpeed(100000000, procs);
+						break;
+					case 4:
+						takeSpeed(1000000000, procs);
+						break;
+					case 5:
+						takeSpeed(MAX_INT, procs);
+						break;
+					default:
+						break;
+				}
+				cho = 0;
+				break;
+			case 4:
 				printf("\nleading zeroes:\n");
 				printf("$");\
 				int zeroes;
 				scanf("%d", &zeroes);
 				clearKeyboardBuffer();
+				
+				printf("\nshow output? (y/n):\n");
+				printf("$");
+				char chr;
+				chr = getchar();
+				if(chr == 'y' || chr == 'Y'){
+					g_show_output = 1;
+				}else {
+					g_show_output = 0;
+				}
+				
 				findHash(zeroes);
 				break;
 			default:
