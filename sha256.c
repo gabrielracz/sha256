@@ -280,10 +280,6 @@ void compression(int* sched, char* output){
 	output[29] = (unsigned char) (h >> 16);
 	output[30] = (unsigned char) (h >> 8);
 	output[31] = (unsigned char) h;
-
-	//sprintf(output, "%08x%08x%08x%08x%08x%08x%08x%08x", a, b, c, d, e, f, g, h);
-	
-	//printf("%x%x%x%x%x%x%x%x\n", a, b, c, d, e, f, g, h);
 }
 
 //main sha256 routine
@@ -407,18 +403,21 @@ void takeSpeed(uint32_t total_max, char num_threads){
 int hashInput(void){
 	char message[56];	
 	unsigned char output[64];
+
 	fgets(message, 56, stdin);
 	long len = strlen(message);
 	if(message[len-1] != '\n')
 		clearKeyboardBuffer();
 	message[len-1] = '\0';
-	
+	len--;
+
 	//Exit case
 	if(message[0] == '!' && message[1] == '!')
 		return 1;
 
 	sha256(message, len, output);
-   
+  
+  	printf("%s", message);
     printf("   ");
 	for(int i =0; i < 32; i++){
 		printf("%02x", output[i]);
@@ -485,7 +484,7 @@ void findHash(int zeroes){
 int main(int argc, char* argv[]){
 	int exit = 0;
 	while(exit != 1){
-		printf("\n   sha256\n");
+		printf("\n  SHA-256\n");
 		printf("1. hash\n");
 		printf("2. single-core benchmark\n");
 		printf("3. multi-core benchmark\n");
