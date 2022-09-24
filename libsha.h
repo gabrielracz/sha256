@@ -2,8 +2,10 @@
 #include<string.h>
 #include<stdint.h>
 #include<stdlib.h>
+#include<errno.h>
 
 #define MAX_INT 4294967295
+#define SHASIZE 65
 
 /*first 32 bits of fractional part of the cube root of first 64 primes*/
 static const uint32_t k[] = {
@@ -58,15 +60,15 @@ int majority(uint32_t x, uint32_t y, uint32_t z){
 
 		/*_____Core_____*/
 
-void process_input(uint8_t* buffer, size_t bufbitlen, uint32_t* message, size_t msglen){
+void process_input(uint8_t* buffer, size_t buflen, uint32_t* message, size_t msglen){
 	// Pack the char binary data into 32bit word array
 	// append 0b1 to end of data.
 	// bit length of message in last 2 words.
 
 	uint32_t elem = 0;
 	uint32_t cword = 0;
-	uint32_t cycle;
-	for(size_t i = 0; i < bufbitlen; i++){
+	uint32_t cycle = 0;
+	for(size_t i = 0; i < buflen; i++){
 		cycle = (i+1) % 4;
 		switch(cycle) {
 			case 0:
@@ -93,11 +95,11 @@ void process_input(uint8_t* buffer, size_t bufbitlen, uint32_t* message, size_t 
 
 	//Add length to last two int blocks
 	//Limit of 32 bit int is 2^32 or 4294967296
-	if(bufbitlen*8 > MAX_INT){
-		message[msglen - 2] = (bufbitlen*8) >> 32;			//upper 32 bits
-		message[msglen - 1] = (uint32_t)(bufbitlen*8);		//lower 32 bits
+	if(buflen*8 > MAX_INT){
+		message[msglen - 2] = (buflen*8) >> 32;			//upper 32 bits
+		message[msglen - 1] = (uint32_t)(buflen*8);		//lower 32 bits
 	}else{
-		message[msglen - 1] = bufbitlen*8;
+		message[msglen - 1] = buflen*8;
 	}
 }
 
@@ -167,13 +169,17 @@ void produce_digest(char* out) {
 	out[64] = '\0';
 }
 
-void sha256(uint8_t* buffer, size_t buflen, char* output){
+int sha256(uint8_t* buffer, size_t buflen, char* output){
 	
 	size_t l = buflen*8 + 1 + 64;						//message bits + 64 bit length encoding + 0b1 seperator
 	size_t msgbits = l + (512 - (l % 512));			//nearest multiple of 512 to our message length
 	size_t num_blocks = msgbits / 512;
 
-	uint32_t* message = (uint32_t*) calloc(msgbits/sizeof(uint32_t), sizeof(uint32_t));
+	uint32_t* message = calloc(msgbits/sizeof(uint32_t), sizeof(uint32_t));
+	if(message == NULL){
+		perror("sha256 malloc");
+		return 1;
+	}   
 	process_input(buffer, buflen, message, msgbits/32);
 
 	uint32_t message_schedule[64];
@@ -183,5 +189,6 @@ void sha256(uint8_t* buffer, size_t buflen, char* output){
 	}
 	produce_digest(output);
 	free(message);
+	return 0;
 }
 
